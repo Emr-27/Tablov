@@ -1,0 +1,16 @@
+{
+  "config_version": "1.0",
+  "audio_asset_root": "<绝对路径>/ai音樂",
+  "resources": {
+    "ddsp_python": "<绝对路径>/DDSP-barbara-6.3/env/python.exe",
+    "ddsp_rmvpe_code": "<绝对路径>/DDSP-barbara-6.3/encoder/rmvpe/inference.py",
+    "ddsp_rmvpe_weight": "<绝对路径>/DDSP-barbara-6.3/pretrain/rmvpe/model.pt",
+    "msst_python": "<绝对路径>/MSST WebUI/workenv/python.exe",
+    "msst_cli": "<绝对路径>/MSST WebUI/scripts/msst_cli.py",
+    "msst_vocal_weight": "<绝对路径>/MSST WebUI/pretrain/vocal_models/mel_band_roformer_vocals_becruily.ckpt",
+    "msst_vocal_config": "<绝对路径>/MSST WebUI/configs/vocal_models/config_vocals_becruily.yaml",
+    "msst_relative_config": "<绝对路径>/MSST WebUI/data_backup/webui_config.json",
+    "ffmpeg": "<绝对路径>/MSST WebUI/ffmpeg/bin/ffmpeg.exe",
+    "some_complete_weight": "<绝对路径>/MSST WebUI/tools/SOME_weights/model_steps_64000_simplified.ckpt"
+  }
+}

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="bapuluofu-token" content="__TOKEN__">
+  <title>扒谱洛夫 Tablov · 口琴转谱工作台</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <aside class="rail">
+    <a class="brand" href="/" aria-label="扒谱洛夫首页"><span class="brand-mark">♮</span><span>扒谱洛夫<small>TABLOV</small></span></a>
+    <div class="rail-label">我的工作台</div>
+    <div class="rail-item active"><span>♫</span> 口琴转谱</div>
+    <div class="rail-note"><span class="small-dot"></span> 文件在本机处理</div>
+    <div class="rail-bottom"><div class="mini-harp">▥▥▥▥▥▥</div><p>听见旋律<br>找到每一个孔位</p><small>本地版 v__VERSION__</small></div>
+  </aside>
+  <main>
+    <header class="page-header"><div><div class="eyebrow">MELODY → HARMONICA</div><h1>把旋律，写成你的口琴谱。</h1><p>导入乐谱，调整音高，再带着孔位开始练习。</p></div><span class="local-badge"><span class="small-dot"></span> 本地工作台</span></header>
+    <div class="workspace">
+      <section class="controls" aria-label="转谱设置">
+        <section class="card input-card">
+          <div class="section-heading"><span class="step">01</span><h2>放入一段旋律</h2></div>
+          <label class="drop-zone" id="drop-zone" tabindex="0" role="button" aria-label="选择 MP3、WAV、MP4、M4A、MIDI 或 Score JSON 文件">
+            <input id="file" type="file" accept=".mp3,.wav,.mp4,.m4a,.mid,.midi,.json" hidden>
+            <span class="file-icon" aria-hidden="true">↥</span><strong id="file-name">拖入文件，或点此选择</strong><span id="file-description">MP3 / WAV / MP4 / M4A / MIDI / JSON · 最多 96 MB</span>
+          </label>
+          <button class="example-button" id="example">先试一段 G 大调示例 <span>↗</span></button>
+          <button class="example-button" id="example-audio">试一段 WAV 音频识别 <span>↗</span></button>
+          <div id="audio-fields" class="audio-fields" hidden>
+            <p class="hint">可分析整首歌曲，程序会自动分段并拼接乐谱；也可手动选取最长 60 秒的片段。混合歌曲选择人声＋伴奏模式。</p>
+            <div id="audio-preview-wrap" hidden><audio id="audio-preview" controls preload="metadata" aria-label="导入音频试听"></audio><button id="use-audio-position" type="button" class="secondary">从当前播放位置开始识别</button><p id="audio-preview-duration" class="hint"></p></div>
+            <label>识别来源<select id="audio-mode"><option value="direct">清晰单旋律 / 已分离人声</option><option value="vocal">混合歌曲 · 人声＋伴奏旋律候选</option></select></label>
+            <label class="audio-full-choice"><input id="audio-full" type="checkbox"> 自动处理整首歌曲</label>
+            <div class="field-pair"><label>片段起点 · 秒<input id="audio-start" type="number" min="0" max="3600" step="0.1" value="0"></label><label>片段长度 · 秒<input id="audio-duration" type="number" min="0.5" max="60" step="0.1" value="30"></label></div>
+            <div class="field-pair"><label>四分音符 BPM<input id="audio-bpm" type="number" min="30" max="300" step="0.1" value="120"></label><label>调性<select id="audio-key"><option value="">未确认 · 暂按 C 大调</option><option value="C major">C 大调</option><option value="G major">G 大调</option><option value="D major">D 大调</option><option value="A major">A 大调</option><option value="E major">E 大调</option><option value="F major">F 大调</option><option value="Bb major">降 B 大调</option><option value="Eb major">降 E 大调</option><option value="A minor">A 小调</option><option value="E minor">E 小调</option><option value="D minor">D 小调</option></select></label></div>
+            <p class="hint">BPM 和调性由你填写；未确认时生成的是待核对草谱。音频在本机分析。</p>
+          </div>
+          <p class="capability">MIDI / JSON 可直接转谱。MP3 / WAV / MP4 / M4A 可选段识别；混合歌曲可分别查看人声与伴奏旋律候选。</p>
+        </section>
+        <section class="card settings-card">
+          <div class="section-heading"><span class="step">02</span><h2>按你的口琴调整</h2></div>
+          <label class="field-label" for="instrument">乐器</label><select id="instrument"><option>12 孔半音阶口琴 · C 调</option></select>
+          <label class="field-label" for="transpose">整体移调 <span class="muted">半音</span></label>
+          <div class="stepper"><button id="transpose-down" aria-label="降低一个半音">−</button><input id="transpose" type="number" min="-48" max="48" value="0" aria-label="整体移调半音数"><button id="transpose-up" aria-label="升高一个半音">＋</button></div>
+          <div class="quick-transpose"><button data-transpose="-12">低八度</button><button data-transpose="0" class="selected">保持原调</button><button data-transpose="12">高八度</button></div>
+          <details id="advanced"><summary>更多设置 <span>＋</span></summary>
+            <label class="field-label" for="midi-origin">MIDI 播放起点</label><select id="midi-origin"><option value="">自动</option><option value="score-start">从谱面开始</option><option value="audio">保留音频前导时间</option></select>
+            <div id="midi-fields" hidden>
+              <p class="hint">轨道与通道从 0 计数。留空时尝试自动选择。</p>
+              <div class="field-pair"><label>轨道<input id="track" type="number" min="0" placeholder="自动"></label><label>通道<input id="channel" type="number" min="0" max="15" placeholder="自动"></label></div>
+              <label class="field-label" for="key">缺失调性时指定</label><select id="key"><option value="">读取文件中的调性</option><option value="C major">C 大调</option><option value="G major">G 大调</option><option value="D major">D 大调</option><option value="A major">A 大调</option><option value="E major">E 大调</option><option value="F major">F 大调</option><option value="Bb major">降 B 大调</option><option value="Eb major">降 E 大调</option><option value="A minor">A 小调</option><option value="E minor">E 小调</option><option value="D minor">D 小调</option></select>
+              <label class="field-label" for="do-midi">无点 1 的 MIDI 音高</label><input id="do-midi" type="number" min="0" max="127" placeholder="自动，如 C4 = 60">
+              <label class="field-label" for="sidecar">MIDI 恢复文件 <span class="muted">可选</span></label><input id="sidecar" type="file" accept=".json"><p class="hint">可添加扒谱洛夫导出的 .mid.json，恢复弱起等信息。</p>
+            </div>
+            <label class="field-label" for="profile">自定义口琴音表 <span class="muted">可选</span></label><input id="profile" type="file" accept=".json">
+          </details>
+          <button id="generate" class="primary" disabled>生成口琴谱 <span>→</span></button>
+          <div id="processing-progress" class="processing-progress" hidden role="status" aria-live="polite">
+            <div class="progress-heading"><span id="progress-phase">正在准备</span><span id="progress-count"></span></div>
+            <progress id="progress-bar" max="1" aria-label="转谱处理进度"></progress>
+          </div>
+          <div id="error" class="error-box" role="alert" hidden></div>
+        </section>
+      </section>
+      <section class="result-area" aria-label="乐谱结果">
+        <div class="result-topline"><span>你的乐谱</span><span id="result-state">等待导入</span></div>
+        <section class="sheet empty-sheet" id="empty">
+          <div class="empty-illustration" aria-hidden="true"><div class="floating-note n1">♪</div><div class="floating-note n2">♬</div><svg viewBox="0 0 340 130" width="310" height="120"><g transform="translate(25,20) rotate(-8 145 50)"><rect x="0" y="0" width="285" height="94" rx="18" fill="#cbd9cf" stroke="#35654d" stroke-width="2"/><rect x="8" y="9" width="269" height="38" rx="11" fill="#eff3e9"/><path d="M24 56H262" stroke="#35654d" stroke-width="2"/><g fill="#35654d"><rect x="23" y="65" width="12" height="16" rx="3"/><rect x="43" y="65" width="12" height="16" rx="3"/><rect x="63" y="65" width="12" height="16" rx="3"/><rect x="83" y="65" width="12" height="16" rx="3"/><rect x="103" y="65" width="12" height="16" rx="3"/><rect x="123" y="65" width="12" height="16" rx="3"/><rect x="143" y="65" width="12" height="16" rx="3"/><rect x="163" y="65" width="12" height="16" rx="3"/><rect x="183" y="65" width="12" height="16" rx="3"/><rect x="203" y="65" width="12" height="16" rx="3"/><rect x="223" y="65" width="12" height="16" rx="3"/><rect x="243" y="65" width="12" height="16" rx="3"/></g><text x="142" y="35" text-anchor="middle" fill="#35654d" font-size="15" letter-spacing="5">BAPULUOFU</text><rect x="285" y="34" width="22" height="26" rx="5" fill="#35654d"/></g></svg></div>
+          <h2>下一首，吹你喜欢的旋律。</h2><p>选择文件或试用左侧示例。<br>简谱、孔位和演奏时值会在这里一起展开。</p>
+          <div class="empty-legend"><span><b>1 2 3</b> 数字简谱</span><span><b>5D 6B</b> 口琴孔位</span><span><b>♫</b> 合成试听</span></div>
+        </section>
+        <div id="results" hidden>
+          <section class="sheet">
+            <div class="sheet-header"><div><span class="eyebrow">HARMONICA SCORE</span><h2 id="result-title"></h2><p id="score-meta"></p></div><span id="status-badge" class="status-badge"></span></div>
+            <div class="score-toolbar"><div class="tabs" role="tablist"><button id="tab-arranged" role="tab" aria-selected="true">口琴版</button><button id="tab-original" role="tab" aria-selected="false">原唱旋律</button><button id="tab-accompaniment" role="tab" aria-selected="false" hidden>伴奏旋律候选</button></div><div class="play-actions"><button id="play-original" class="play-button" aria-pressed="false">▶ 原始旋律试听</button><button id="play-arranged" class="play-button" aria-pressed="false">▶ 口琴版试听</button><button id="play-accompaniment" class="play-button" aria-pressed="false" hidden>▶ 伴奏试听</button><button id="raise-octave" class="play-button" hidden>口琴版升高八度</button></div></div>
+            <p id="playback-hint" class="playback-hint"></p><audio id="result-source-audio" preload="metadata" hidden></audio>
+            <div id="vocal-playback" class="vocal-playback" hidden><span>分离后主唱 · 对照草谱</span><audio id="vocal-audio" controls preload="none" aria-label="分离后主唱试听"></audio></div>
+            <div id="accompaniment-playback" class="vocal-playback" hidden><span>分离后伴奏 · 对照旋律候选</span><audio id="accompaniment-audio" controls preload="none" aria-label="分离后伴奏试听"></audio></div>
+            <div id="notation" class="notation" aria-label="简谱与孔位"></div>
+            <div class="notation-legend"><span>B 吹气 · D 吸气 · ＋ 按键</span><span>数字下方 1 点是低音 · 2 点是倍低音</span><span>* 自动补全的待校对音 · ? 仍无法判断</span></div>
+          </section>
+          <section id="warnings" class="warning-card" hidden></section>
+          <section class="downloads-card"><div><h3>把乐谱带走</h3><p>ZIP 包含乐谱、MIDI 和 MP3 试听；大体积原唱 WAV 可在下方单独下载。</p></div><a id="download-zip" class="primary download">下载乐谱包 <span>↓</span></a><div id="downloads" class="download-links"></div></section>
+          <details class="card edit-card" id="edit-panel"><summary><span>音高校正 <small>修改原旋律后重新生成</small></span><span>＋</span></summary><p class="hint">音高使用 MIDI 数字，例如 C4 = 60。改动会生成新版本，时值保持原样。</p><div class="table-scroll"><table><thead><tr><th>音符</th><th>原音高</th><th>校正 MIDI</th><th>时值</th></tr></thead><tbody id="edit-rows"></tbody></table></div><button id="apply-edits" class="secondary">应用音高校正</button></details>
+          <details class="details-output"><summary>查看本机保存位置</summary><code id="output-path"></code><button class="text-button" id="copy-path">复制路径</button></details>
+        </div>
+      </section>
+    </div>
+    <footer>扒谱洛夫 <span>·</span> 原始乐谱与口琴编配分别保存 <span>·</span> <button id="reset" class="text-button">重新开始</button></footer>
+  </main>
+  <div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>

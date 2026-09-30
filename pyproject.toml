@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tablov"
+version = "0.3.0"
+description = "Tablov (扒谱洛夫)：本机音频、MIDI 与 JSON 转口琴简谱和 TAB"
+requires-python = ">=3.11,<3.12"
+dependencies = []
+
+[project.scripts]
+harmonica-export = "harmonica_transcriber.cli:main"
+bapuluofu = "harmonica_transcriber.cli:main"
+tablov = "harmonica_transcriber.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+harmonica_transcriber = ["web/*.html", "web/*.css", "web/*.js"]

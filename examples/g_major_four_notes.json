@@ -1,0 +1,80 @@
+{
+  "schema_version": "2.0",
+  "revision_id": "example-g-major-r1",
+  "source": {
+    "kind": "manual",
+    "name": "G major four notes"
+  },
+  "score_start_q": "0",
+  "score_end_q": "4",
+  "time_map": {
+    "kind": "tempo",
+    "origin_q": "0",
+    "origin_sec": 0.0,
+    "tempo_events": [
+      {
+        "at_q": "0",
+        "bpm_q": 120.0
+      }
+    ]
+  },
+  "meter_map": [
+    {
+      "at_q": "0",
+      "numerator": 4,
+      "denominator": 4,
+      "source": "user"
+    }
+  ],
+  "first_full_bar_q": "0",
+  "key_map": [
+    {
+      "at_q": "0",
+      "tonic_pc": 7,
+      "tonic_spelling": "G",
+      "mode": "major",
+      "do_midi": 67,
+      "minor_system": "la",
+      "source": "user"
+    }
+  ],
+  "events": [
+    {
+      "id": "n1",
+      "kind": "note",
+      "pitch_midi": 74,
+      "start_q": "0",
+      "duration_q": "1",
+      "phrase_id": "p1",
+      "spelling_hint": "D5"
+    },
+    {
+      "id": "n2",
+      "kind": "note",
+      "pitch_midi": 76,
+      "start_q": "1",
+      "duration_q": "1",
+      "phrase_id": "p1",
+      "spelling_hint": "E5"
+    },
+    {
+      "id": "n3",
+      "kind": "note",
+      "pitch_midi": 79,
+      "start_q": "2",
+      "duration_q": "1",
+      "phrase_id": "p1",
+      "spelling_hint": "G5"
+    },
+    {
+      "id": "n4",
+      "kind": "note",
+      "pitch_midi": 78,
+      "start_q": "3",
+      "duration_q": "1",
+      "phrase_id": "p1",
+      "spelling_hint": "F#5"
+    }
+  ],
+  "changes": []
+}

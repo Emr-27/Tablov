@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+runtime/
+outputs/
+*.egg-info/
+configs/local_backends.local.json
+logs/
+review_work/
+local_ai_music_reuse_audit.md
