@@ -1,6 +1,6 @@
 "use strict";
 const $ = id => document.getElementById(id);
-const state = { file: null, fileUrl: null, resultFileUrl: null, example: false, audioExample: false, corrected: false, result: null, view: "arranged", playingView: null, recording: null, recordingListener: null, busy: false, audio: null, timer: null, nodes: new Set() };
+const state = { file: null, fileUrl: null, resultFileUrl: null, example: false, audioExample: false, corrected: false, result: null, view: "arranged", playingView: null, recording: null, recordingListener: null, transport: null, transportTimer: null, seeking: false, busy: false, audio: null, timer: null, nodes: new Set() };
 const token = document.querySelector('meta[name="bapuluofu-token"]').content;
 function element(tag, cls, text) {
   const node = document.createElement(tag);
@@ -209,6 +209,7 @@ function renderNotation() {
     bar.append(element("span", "bar-index", String(index + 1).padStart(2, "0")));
     parts.forEach(part => {
       const note = element("div", "note" + (part.kind === "unknown" ? " unknown" : "") + (part.review_required ? " candidate" : "") + (part.tab && part.tab.startsWith("X[") ? " unplayable" : ""));
+      note.dataset.eventId = part.id;
       note.title = (part.pitch_name || part.kind) + " · " + part.duration_q + " 拍" + (part.review_required ? " · 自动补全，需试听校对" : "") + (part.tuplet_group_id ? " · 连音组 " + part.tuplet_group_id : "");
       const symbol = element("div", "note-symbol");
       const match = (part.jianpu || "").match(/^([#b]*)([1-7])([',]*)$/);
@@ -233,6 +234,7 @@ function renderNotation() {
     fragment.append(bar);
   });
   $("notation").replaceChildren(fragment);
+  updatePlaybackHighlight();
 }
 function renderResult() {
   const result = state.result, report = result.report;
@@ -310,22 +312,133 @@ function originalPlaybackName() {
   return "原始旋律（谱面合成）";
 }
 function originalPlaybackLabel() { return "▶ " + originalPlaybackName() + "试听"; }
-function stopAudio() {
+function stopAudio(exceptMedia = null) {
   if (state.timer) clearInterval(state.timer);
-  state.timer = null;
+  if (state.transportTimer) clearInterval(state.transportTimer);
+  state.timer = null; state.transportTimer = null;
   if (state.recording && state.recordingListener) {
     for (const [event, listener] of state.recordingListener) state.recording.removeEventListener(event, listener);
   }
-  state.recording = null; state.recordingListener = null;
-  for (const id of ["audio-preview", "vocal-audio", "accompaniment-audio", "result-source-audio"]) $(id).pause();
+  state.recording = null; state.recordingListener = null; state.transport = null; state.seeking = false;
+  for (const id of ["audio-preview", "vocal-audio", "accompaniment-audio", "result-source-audio"]) if ($(id) !== exceptMedia) $(id).pause();
   for (const oscillator of state.nodes) { try { oscillator.stop(); } catch (_) {} }
   state.nodes.clear(); state.playingView = null;
+  $("playback-seek").hidden = true;
+  document.querySelectorAll(".note.is-playing").forEach(note => note.classList.remove("is-playing"));
   $("play-original").textContent = originalPlaybackLabel();
   $("play-arranged").textContent = "▶ 口琴版试听";
   $("play-accompaniment").textContent = "▶ 伴奏试听";
   $("play-original").setAttribute("aria-pressed", "false");
   $("play-arranged").setAttribute("aria-pressed", "false");
   $("play-accompaniment").setAttribute("aria-pressed", "false");
+}
+function timingForView(view) {
+  const score = view === "accompaniment" ? state.result.accompaniment_score
+    : view === "arranged" ? state.result.arrangement : state.result.score;
+  const events = (score?.events || []).filter(event => event.kind === "note" && event.performed);
+  if (!events.length) return {events:[], origin:0, duration:0};
+  const origin = Math.min(...events.map(event => event.performed.start_sec));
+  const end = Math.max(...events.map(event => event.performed.end_sec));
+  return {events, origin, duration:Math.max(0.1, end - origin)};
+}
+function formatTime(seconds) {
+  const value = Math.max(0, Math.floor(Number(seconds) || 0));
+  return Math.floor(value / 60) + ":" + String(value % 60).padStart(2, "0");
+}
+function updatePlaybackHighlight() {
+  document.querySelectorAll("#notation .note").forEach(note => {
+    const event = state.transport?.eventsById.get(note.dataset.eventId);
+    const position = state.transport?.position ?? -1;
+    note.classList.toggle("is-playing", Boolean(event && position >= event.start && position < event.end));
+  });
+}
+function updatePlaybackUI() {
+  const transport = state.transport;
+  if (!transport) return;
+  const position = state.seeking ? transport.position : transport.media
+    ? transport.media.currentTime - transport.mediaOffset
+    : state.audio && Number.isFinite(transport.startedAt) ? state.audio.currentTime - transport.startedAt : transport.position;
+  transport.position = Math.max(0, Math.min(transport.duration, position));
+  $("playback-range").max = String(Math.max(0.1, transport.duration));
+  $("playback-range").value = String(transport.position);
+  $("playback-time").textContent = formatTime(transport.position) + " / " + formatTime(transport.duration);
+  updatePlaybackHighlight();
+  if (transport.position >= transport.duration && transport.media) stopAudio();
+  else if (transport.position >= transport.duration && transport.kind === "synth") stopAudio();
+}
+function showPlayback(view, label, events, origin, duration, media = null, mediaOffset = 0) {
+  const segmentOrigin = state.result.report.audio?.segment_start_sec ?? 0;
+  const eventOrigin = media && view !== "arranged" ? segmentOrigin : origin;
+  state.transport = {view, label, eventsById:new Map(events.map(event => [event.id, {
+    start:event.performed.start_sec - eventOrigin, end:event.performed.end_sec - eventOrigin
+  }])), duration, media, mediaOffset, kind:media ? "media" : "synth", position:0};
+  $("playback-label").textContent = label;
+  $("playback-range").max = String(Math.max(0.1, duration));
+  $("playback-range").value = "0";
+  $("playback-time").textContent = "0:00 / " + formatTime(duration);
+  $("playback-seek").hidden = false;
+  state.transportTimer = setInterval(updatePlaybackUI, 60);
+  updatePlaybackUI();
+}
+function activateMediaPlayback(view, media, label, offset, duration) {
+  if (state.recording === media && state.transport) return;
+  stopAudio(media);
+  const timing = timingForView(view);
+  const segmentDuration = Number.isFinite(duration) && duration > 0 ? duration : timing.duration;
+  showPlayback(view, label, timing.events, timing.origin, segmentDuration, media, offset);
+  state.recording = media;
+  const finish = () => { if (state.recording === media) stopAudio(); };
+  state.recordingListener = [["ended", finish], ["pause", finish]];
+  for (const [event, listener] of state.recordingListener) media.addEventListener(event, listener);
+  state.playingView = view;
+  updatePlaybackButtons(view, true);
+}
+function updatePlaybackButtons(view, playing) {
+  const button = $("play-" + view);
+  if (!button) return;
+  const label = view === "original" ? originalPlaybackName() : view === "arranged" ? "口琴版" : "伴奏";
+  button.textContent = playing ? "■ 停止" + label : "▶ " + label + "试听";
+  button.setAttribute("aria-pressed", String(playing));
+}
+function stopScheduledNotes() {
+  if (state.timer) clearInterval(state.timer);
+  state.timer = null;
+  for (const oscillator of state.nodes) { try { oscillator.stop(); } catch (_) {} }
+  state.nodes.clear();
+}
+async function startSynthAt(view, position) {
+  const transport = state.transport;
+  if (!transport || transport.kind !== "synth") return;
+  stopScheduledNotes();
+  const Audio = window.AudioContext || window.webkitAudioContext;
+  if (!Audio) throw new Error("当前浏览器不支持合成试听。");
+  state.audio ||= new Audio();
+  await state.audio.resume();
+  const source = timingForView(view).events;
+  const origin = transport.origin;
+  const startAt = state.audio.currentTime + 0.08;
+  transport.startedAt = startAt - position;
+  transport.position = position;
+  let next = Math.max(0, source.findIndex(note => note.performed.end_sec - origin > position));
+  const schedule = () => {
+    const now = state.audio.currentTime;
+    const current = Math.max(0, now - transport.startedAt);
+    while (next < source.length && source[next].performed.start_sec - origin <= current + 0.4) {
+      const note = source[next++], noteStart = note.performed.start_sec - origin, noteEnd = note.performed.end_sec - origin;
+      if (noteEnd <= current) continue;
+      const at = Math.max(now + 0.01, startAt + Math.max(noteStart, current) - position);
+      const duration = Math.max(0.015, noteEnd - Math.max(noteStart, current));
+      const osc = state.audio.createOscillator(), gain = state.audio.createGain();
+      osc.type = "triangle"; osc.frequency.value = 440 * Math.pow(2, ((note.played_pitch_midi ?? note.pitch_midi) - 69) / 12);
+      gain.gain.setValueAtTime(0, at); gain.gain.linearRampToValueAtTime(0.12, at + Math.min(0.012, duration / 3)); gain.gain.linearRampToValueAtTime(0, at + duration);
+      osc.connect(gain); gain.connect(state.audio.destination); state.nodes.add(osc);
+      osc.onended = () => { state.nodes.delete(osc); osc.disconnect(); gain.disconnect(); };
+      osc.start(at); osc.stop(at + duration + 0.01);
+    }
+    updatePlaybackUI();
+  };
+  state.timer = setInterval(schedule, 80);
+  schedule();
 }
 async function playVersion(view) {
   if (state.playingView === view) return stopAudio();
@@ -335,14 +448,8 @@ async function playVersion(view) {
     renderNotation();
     if (view === "accompaniment") {
       const media = $("accompaniment-audio");
-      const finish = () => { if (state.recording === media) stopAudio(); };
-      state.recording = media;
-      state.recordingListener = [["ended", finish], ["pause", finish]];
-      for (const [event, listener] of state.recordingListener) media.addEventListener(event, listener);
-      state.playingView = view;
-      $("play-accompaniment").textContent = "■ 停止伴奏";
-      $("play-accompaniment").setAttribute("aria-pressed", "true");
       media.currentTime = 0;
+      activateMediaPlayback(view, media, "分离后伴奏 · 伴奏旋律候选", 0, Number.isFinite(media.duration) ? media.duration : timingForView(view).duration);
       await media.play();
       return;
     }
@@ -352,49 +459,46 @@ async function playVersion(view) {
       const media = vocal ? $("vocal-audio") : state.resultFileUrl ? $("result-source-audio") : null;
       if (media) {
         const begin = vocal ? 0 : Number(manifest.segment_start_sec);
-        const end = begin + Number(manifest.decoded_duration_sec);
         media.currentTime = begin;
-        const finish = () => { if (state.recording === media) stopAudio(); };
-        const checkEnd = () => { if (media.currentTime >= end - 0.03) finish(); };
-        state.recording = media;
-        state.recordingListener = [["timeupdate", checkEnd], ["ended", finish], ["pause", finish]];
-        for (const [event, listener] of state.recordingListener) media.addEventListener(event, listener);
-        state.playingView = view;
-        $("play-original").textContent = "■ 停止" + originalPlaybackName();
-        $("play-original").setAttribute("aria-pressed", "true");
+        activateMediaPlayback(view, media, originalPlaybackName(), begin, Number(manifest.decoded_duration_sec));
         await media.play();
         return;
       }
     }
-    const Audio = window.AudioContext || window.webkitAudioContext;
-    if (!Audio) throw new Error("当前浏览器不支持合成试听。");
-    state.audio ||= new Audio(); await state.audio.resume();
-    const events = view === "original" ? state.result.score.events : state.result.arrangement.events;
-    const notes = events.filter(e => e.kind === "note");
-    if (!notes.length) return toast("没有可试听的音符");
-    const origin = Math.min(...events.map(e => e.performed.start_sec));
-    const end = Math.max(...events.map(e => e.performed.end_sec)) - origin;
-    const start = state.audio.currentTime + 0.1;
-    let next = 0;
-    const schedule = () => {
-      const now = state.audio.currentTime;
-      while (next < notes.length && start + notes[next].performed.start_sec - origin < now + 0.4) {
-        const note = notes[next++], at = Math.max(now, start + note.performed.start_sec - origin);
-        const duration = Math.max(0.015, note.performed.end_sec - note.performed.start_sec);
-        const osc = state.audio.createOscillator(), gain = state.audio.createGain();
-        osc.type = "triangle"; osc.frequency.value = 440 * Math.pow(2, ((note.played_pitch_midi ?? note.pitch_midi) - 69) / 12);
-        gain.gain.setValueAtTime(0, at); gain.gain.linearRampToValueAtTime(0.12, at + Math.min(0.012, duration / 3)); gain.gain.linearRampToValueAtTime(0, at + duration);
-        osc.connect(gain); gain.connect(state.audio.destination); state.nodes.add(osc);
-        osc.onended = () => { state.nodes.delete(osc); osc.disconnect(); gain.disconnect(); };
-        osc.start(at); osc.stop(at + duration + 0.01);
-      }
-      if (now > start + end + 0.1) stopAudio();
-    };
+    const timing = timingForView(view);
+    if (!timing.events.length) return toast("没有可试听的音符");
+    showPlayback(view, view === "original" ? "原始旋律 · 谱面合成" : "口琴版 · 谱面合成", timing.events, timing.origin, timing.duration);
+    state.transport.origin = timing.origin;
     state.playingView = view;
-    $("play-" + view).textContent = "■ 停止" + (view === "original" ? "原谱合成" : "口琴版");
-    $("play-" + view).setAttribute("aria-pressed", "true");
-    state.timer = setInterval(schedule, 80); schedule();
+    updatePlaybackButtons(view, true);
+    await startSynthAt(view, 0);
   } catch (exc) { stopAudio(); error(exc.message); }
+}
+$("playback-range").addEventListener("input", () => {
+  const transport = state.transport;
+  if (!transport) return;
+  const position = Number($("playback-range").value);
+  if (transport.media) transport.media.currentTime = transport.mediaOffset + position;
+  else state.seeking = true;
+  transport.position = position;
+  $("playback-time").textContent = formatTime(position) + " / " + formatTime(transport.duration);
+  updatePlaybackHighlight();
+});
+$("playback-range").addEventListener("change", () => {
+  const transport = state.transport;
+  state.seeking = false;
+  if (transport && !transport.media) startSynthAt(transport.view, Number($("playback-range").value)).catch(exc => { stopAudio(); error(exc.message); });
+});
+for (const [id, view, label] of [["vocal-audio","original","分离后主唱 · 对照草谱"],["accompaniment-audio","accompaniment","分离后伴奏 · 伴奏旋律候选"]]) {
+  const media = $(id);
+  media.addEventListener("play", () => {
+    if (state.recording === media) return;
+    const manifest = state.result?.report.audio;
+    const duration = Math.min(Number.isFinite(media.duration) ? media.duration : Infinity, Number(manifest?.decoded_duration_sec) || media.duration);
+    activateMediaPlayback(view, media, label, 0, duration);
+    updatePlaybackUI();
+  });
+  media.addEventListener("timeupdate", () => { if (state.recording === media) updatePlaybackUI(); });
 }
 $("play-original").onclick = () => playVersion("original");
 $("play-arranged").onclick = () => playVersion("arranged");
