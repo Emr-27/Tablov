@@ -14,6 +14,7 @@ from .theory import key_from_text
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKER = Path(__file__).with_name("audio_worker.py")
+TEMPO_WORKER = Path(__file__).with_name("tempo_worker.py")
 CONFIG = ROOT / "configs" / "local_backends.local.json"
 GRID = Fraction(1, 4)
 CHUNK_SECONDS = 55.0
@@ -75,6 +76,34 @@ def chunk_plan(duration: float) -> list[tuple[float, float]]:
         parts.append((start, end - start))
         start = end
     return parts
+
+
+def estimate_tempo(path: Path, job: Path, start_sec: float, duration_sec: float) -> dict:
+    """Run bounded beat estimation on the original mix before source separation."""
+    python, ffmpeg = resources()
+    job.mkdir(parents=True, exist_ok=True)
+    output = job / "tempo_evidence.json"
+    command = [str(python), "-B", str(TEMPO_WORKER), "--input", str(path.resolve()),
+               "--ffmpeg", str(ffmpeg), "--start", str(start_sec),
+               "--duration", str(duration_sec), "--output", str(output.resolve())]
+    try:
+        done = subprocess.run(command, cwd=job, capture_output=True, timeout=120, check=False,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except subprocess.TimeoutExpired as exc:
+        raise ContractError("自动 BPM", "节拍识别超时，请手动填写 BPM") from exc
+    if done.returncode or not output.is_file():
+        detail = done.stderr.decode("utf-8", errors="replace")[-300:].strip()
+        raise ContractError("自动 BPM", detail or "无法可靠识别节拍，请手动填写 BPM")
+    try:
+        data = json.loads(output.read_text(encoding="utf-8"))
+        bpm = float(data["bpm"])
+        if (data["input_sha256"] != sha256(path.read_bytes()).hexdigest() or
+                not math.isfinite(bpm) or not 30 <= bpm <= 300 or
+                not isinstance(data["alternatives_bpm"], list)):
+            raise ValueError("节拍结果无效")
+        return data
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ContractError("自动 BPM", "节拍识别结果无效，请手动填写 BPM") from exc
 
 
 def extract_evidence(path: Path, job: Path, start_sec: float, duration_sec: float,
@@ -333,7 +362,8 @@ def transcribe(path: Path, job: Path, *, source_name: str, start_sec: object,
                full_song: bool = False, progress=None) -> tuple[dict, dict]:
     start = number(start_sec, "片段起点")
     duration = number(duration_sec, "片段长度", positive=True)
-    tempo = number(bpm, "四分音符 BPM", positive=True)
+    auto_tempo = bpm in (None, "", "auto")
+    tempo = None if auto_tempo else number(bpm, "四分音符 BPM", positive=True)
     if type(full_song) is not bool:
         raise ContractError("整首处理", "选项无效")
     if full_song:
@@ -341,7 +371,7 @@ def transcribe(path: Path, job: Path, *, source_name: str, start_sec: object,
         duration = audio_duration(path)
     elif not 0 <= start <= 3600 or not 0.5 <= duration <= 60:
         raise ContractError("音频片段", "起点应在 0–3600 秒，长度应在 0.5–60 秒")
-    if not 30 <= tempo <= 300:
+    if tempo is not None and not 30 <= tempo <= 300:
         raise ContractError("四分音符 BPM", "应在 30–300 之间")
     if mode not in ("direct", "vocal"):
         raise ContractError("识别来源", "请选择清晰单旋律或提取主唱")
@@ -356,14 +386,20 @@ def transcribe(path: Path, job: Path, *, source_name: str, start_sec: object,
     accompaniment_evidence = None
     plan = chunk_plan(duration) if full_song else [(start, duration)]
     total_chunks = len(plan)
-    total_steps = total_chunks + 2
+    tempo_step = 1 if auto_tempo else 0
+    total_steps = total_chunks + 2 + tempo_step
 
     def report(phase: str, completed: int, chunks_completed: int):
         if progress:
             progress({"phase": phase, "completed": completed, "total": total_steps,
                       "chunks_completed": chunks_completed, "chunks_total": total_chunks})
 
-    report(f"正在处理第 1/{total_chunks} 段", 0, 0)
+    tempo_evidence = None
+    if auto_tempo:
+        report("正在识别节拍", 0, 0)
+        tempo_evidence = estimate_tempo(path, job, start, duration)
+        tempo = float(tempo_evidence["bpm"])
+    report(f"正在处理第 1/{total_chunks} 段", tempo_step, 0)
     if full_song:
         from .separation import separate_vocals, join_stems
         chunks = []
@@ -407,7 +443,7 @@ def transcribe(path: Path, job: Path, *, source_name: str, start_sec: object,
                            "frame_count": len(part["frames"]), "separation": part_separation})
             next_phase = (f"正在处理第 {index+2}/{total_chunks} 段" if index + 1 < total_chunks
                           else "正在拼接人声和伴奏音轨" if mode == "vocal" else "正在合并音高证据")
-            report(next_phase, index + 1, index + 1)
+            report(next_phase, index + 1 + tempo_step, index + 1)
         if mode == "vocal":
             joined = join_stems(vocals, job / "vocal_segment.wav")
             separation = {"backend": "msst-mel-band-roformer", "vocal_sha256": sha256(joined.read_bytes()).hexdigest(),
@@ -450,10 +486,10 @@ def transcribe(path: Path, job: Path, *, source_name: str, start_sec: object,
         evidence["channel_mix"] = "MSST vocals -> FFmpeg mono downmix"
         (job / "pitch_evidence.json").write_text(
             json.dumps(evidence, ensure_ascii=False, allow_nan=False), encoding="utf-8")
-        report("正在合并音高证据", 1, 1)
+        report("正在合并音高证据", 1 + tempo_step, 1)
     else:
         evidence = extract_evidence(path, job, start, duration)
-        report("正在合并音高证据", 1, 1)
+        report("正在合并音高证据", 1 + tempo_step, 1)
     score, summary = notes_to_score(evidence, source_name=source_name, bpm=tempo,
                                     key_text=key_text, do_midi=do, key_source=key_source)
     accompaniment_summary = None
@@ -466,12 +502,13 @@ def transcribe(path: Path, job: Path, *, source_name: str, start_sec: object,
             json.dumps(accompaniment_score, ensure_ascii=False, allow_nan=False), encoding="utf-8")
         (job / "accompaniment_evidence.json").write_text(
             json.dumps(accompaniment_evidence, ensure_ascii=False, allow_nan=False), encoding="utf-8")
-    report("正在导出乐谱与音频", total_chunks + 1, total_chunks)
+    report("正在导出乐谱与音频", total_chunks + 1 + tempo_step, total_chunks)
     manifest = {"source_name": source_name, "input_sha256": evidence["input_sha256"],
                 "backend": evidence["backend"], "backend_version": evidence["backend_version"],
                 "segment_start_sec": start, "decoded_duration_sec": evidence["decoded_duration_sec"],
                 "requested_duration_sec": duration, "tempo_bpm_q": tempo,
-                "tempo_source": "user_or_default_unverified",
+                "tempo_source": "estimated_spectral_flux_unconfirmed" if auto_tempo else "user_or_default_unverified",
+                "tempo_estimation": tempo_evidence,
                 "key_source": key_source, "meter_source": "assumed", "meter_alignment_status": "unconfirmed",
                 "time_grid_q": "1/4", "analysis_mode": mode, "full_song": full_song,
                 "pitch_completion_version": ("vocal-" + vocal_backend + "-and-conservative-accompaniment-r4")

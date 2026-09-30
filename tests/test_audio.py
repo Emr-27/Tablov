@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from harmonica_transcriber.audio import transcribe, resources, notes_to_score
+from harmonica_transcriber.audio import estimate_tempo, transcribe, resources, notes_to_score
 from harmonica_transcriber.cli import run
 from harmonica_transcriber.render import markdown_score, render_events
 from harmonica_transcriber.webui import generate
@@ -40,6 +40,37 @@ def sine_fixture(path):
         wav.writeframes(struct.pack("<" + "h"*len(data), *data))
 
 class AudioTests(unittest.TestCase):
+    def test_auto_tempo_recognizes_click_track(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            wav_path = root / "beat.wav"
+            sample_rate = 11025
+            samples = []
+            for index in range(12 * sample_rate):
+                in_beat = index % round(sample_rate * 0.6)
+                value = (0.7 * math.sin(2 * math.pi * 1300 * in_beat / sample_rate) *
+                         math.exp(-in_beat / 140) if in_beat < 1200 else 0)
+                samples.append(round(value * 32767))
+            with wave.open(str(wav_path), "wb") as output:
+                output.setnchannels(1); output.setsampwidth(2); output.setframerate(sample_rate)
+                output.writeframes(struct.pack("<" + "h" * len(samples), *samples))
+            result = estimate_tempo(wav_path, root / "job", 0, 12)
+            self.assertAlmostEqual(result["bpm"], 100, delta=3)
+            self.assertEqual(result["input_sha256"], sha256(wav_path.read_bytes()).hexdigest())
+            frames = [{"sec": round(index * .016, 6), "rms": .2, "hz": 261.626,
+                       "candidate_hz": 261.626, "voiced": True, "periodicity": .95}
+                      for index in range(30)]
+            evidence = {"backend": "test", "backend_version": "1", "input_sha256": result["input_sha256"],
+                        "source_start_sec": 0, "decoded_duration_sec": .48,
+                        "frames": frames, "onset_frames": []}
+            with patch("harmonica_transcriber.audio.extract_evidence", return_value=evidence):
+                score, manifest = transcribe(wav_path, root / "transcribed", source_name="beat.wav",
+                                             start_sec=0, duration_sec=12, bpm="auto", key_text="C major")
+            self.assertTrue(score["events"])
+            self.assertAlmostEqual(manifest["tempo_bpm_q"], 100, delta=3)
+            self.assertEqual(manifest["tempo_source"], "estimated_spectral_flux_unconfirmed")
+            self.assertTrue((root / "transcribed" / "tempo_evidence.json").is_file())
+
     def test_short_vocal_pitch_wobble_is_absorbed(self):
         frames = []
         for index, midi in enumerate([60] * 12 + [61] * 3 + [60] * 12):

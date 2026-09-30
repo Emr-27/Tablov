@@ -36,7 +36,7 @@ OUTPUT_NAMES = {"original_score.json", "arrangement.json", "melody_original.md",
                 "audio_manifest.json", "pitch_evidence.json", "vocal_segment.wav", "vocal_preview.mp3"}
 OUTPUT_NAMES.update({"accompaniment_score.json", "accompaniment_melody.md",
                      "accompaniment_melody.mid", "accompaniment_evidence.json",
-                     "accompaniment_preview.mp3"})
+                     "accompaniment_preview.mp3", "tempo_evidence.json"})
 
 
 def _decode_upload(item: dict, extensions: set[str]) -> tuple[str, bytes]:
@@ -107,6 +107,9 @@ def generate(payload: dict, jobs_root: Path, progress=None) -> dict:
                     audio_manifest["input_sha256"] != score["source"].get("sha256")):
                 raise ContractError("音频证据", "原任务与当前乐谱不匹配")
             (folder / "pitch_evidence.json").write_bytes(parent_evidence.read_bytes())
+            parent_tempo = parent_output / "tempo_evidence.json"
+            if parent_tempo.is_file():
+                shutil.copyfile(parent_tempo, folder / "tempo_evidence.json")
             if audio_manifest.get("analysis_mode") == "vocal":
                 parent_vocal = parent_output / "vocal_segment.wav"
                 if (not parent_vocal.is_file() or
@@ -161,7 +164,7 @@ def generate(payload: dict, jobs_root: Path, progress=None) -> dict:
             score, audio_manifest = transcribe(path, folder, source_name=name,
                                                start_sec=settings.get("audio_start", 0),
                                                duration_sec=settings.get("audio_duration", 30),
-                                               bpm=settings.get("audio_bpm", 120),
+                                               bpm=settings.get("audio_bpm", "auto"),
                                                key_text=settings.get("audio_key", ""),
                                                do_midi=settings.get("audio_do_midi"),
                                                mode=settings.get("audio_mode", "direct"),
@@ -204,9 +207,14 @@ def generate(payload: dict, jobs_root: Path, progress=None) -> dict:
                             "sha256": audio_manifest["input_sha256"],
                             "derived_score_path": str(path.resolve())}
         if audio_manifest["analysis_mode"] == "vocal":
-            report["warnings"].append(f"主唱音高由 {vocal_backend}、伴奏候选由谐波显著度生成；BPM、拍号及小节对齐未自动确认，请试听校正")
+            report["warnings"].append(f"主唱音高由 {vocal_backend}、伴奏候选由谐波显著度生成；拍号及小节对齐未自动确认，请试听校正")
         else:
-            report["warnings"].append("单旋律音高由 FFT-YIN 生成；BPM、拍号及小节对齐未自动确认，请试听校正")
+            report["warnings"].append("单旋律音高由 FFT-YIN 生成；拍号及小节对齐未自动确认，请试听校正")
+        if audio_manifest.get("tempo_estimation"):
+            alternatives = audio_manifest["tempo_estimation"].get("alternatives_bpm", [])
+            other = ("；可能的半速或倍速拍法：" + "、".join(str(value) for value in alternatives) + " BPM"
+                     if alternatives else "")
+            report["warnings"].append(f"自动估计节拍为 {audio_manifest['tempo_bpm_q']} BPM{other}；请对照原音频核对小节与强拍")
         inferred = sum(e["kind"] == "note" and e.get("review_required", False) for e in score["events"])
         if inferred:
             report["warnings"].append(f"已自动补全 {inferred} 个待校对音（谱面标 *）；请对照原音频检查，仍无法判断的区段保留 ?")
@@ -226,6 +234,9 @@ def generate(payload: dict, jobs_root: Path, progress=None) -> dict:
         (output / "audio_manifest.json").write_text(json.dumps(audio_manifest, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
         (output / "pitch_evidence.json").write_bytes((folder / "pitch_evidence.json").read_bytes())
         audio_artifacts = ["audio_manifest.json", "pitch_evidence.json"]
+        if (folder / "tempo_evidence.json").is_file():
+            shutil.copyfile(folder / "tempo_evidence.json", output / "tempo_evidence.json")
+            audio_artifacts.append("tempo_evidence.json")
         if audio_manifest["analysis_mode"] == "vocal":
             vocal_source = folder / "vocal_segment.wav"
             if not vocal_source.is_file():

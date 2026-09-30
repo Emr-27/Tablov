@@ -41,6 +41,7 @@ function selectFile(file) {
   const isAudio = /\.(mp3|wav|mp4|m4a)$/i.test(file.name);
   $("audio-fields").hidden = !isAudio;
   if (isAudio) {
+    $("audio-bpm-auto").checked = true; updateAudioBpm();
     state.fileUrl = URL.createObjectURL(file);
     $("audio-preview").src = state.fileUrl;
     $("audio-preview-wrap").hidden = false;
@@ -66,6 +67,8 @@ function updateAudioRange() {
   for (const id of ["audio-start", "audio-duration", "use-audio-position"]) $(id).disabled = $("audio-full").checked;
 }
 $("audio-full").onchange = updateAudioRange;
+function updateAudioBpm() { $("audio-bpm").disabled = $("audio-bpm-auto").checked; }
+$("audio-bpm-auto").onchange = updateAudioBpm;
 $("use-audio-position").onclick = () => {
   const preview = $("audio-preview");
   if (!Number.isFinite(preview.currentTime)) return;
@@ -86,10 +89,16 @@ function settings() {
   if (result.transpose === "" || !Number.isInteger(Number(result.transpose)) || Number(result.transpose) < -48 || Number(result.transpose) > 48) throw new Error("移调必须是 -48 至 48 之间的整数。");
   for (const key of ["transpose", "track", "channel", "do_midi"]) if (result[key] !== "") result[key] = Number(result[key]);
   if (state.audioExample || (state.file && /\.(mp3|wav|mp4|m4a)$/i.test(state.file.name))) {
-    for (const [key, id] of Object.entries({audio_start:"audio-start", audio_duration:"audio-duration", audio_bpm:"audio-bpm"})) {
+    for (const [key, id] of Object.entries({audio_start:"audio-start", audio_duration:"audio-duration"})) {
       const value = Number($(id).value);
-      if ($(id).value === "" || !Number.isFinite(value)) throw new Error("音频片段和 BPM 需要填写有效数字。");
+      if ($(id).value === "" || !Number.isFinite(value)) throw new Error("音频片段需要填写有效数字。");
       result[key] = value;
+    }
+    if ($("audio-bpm-auto").checked) result.audio_bpm = "auto";
+    else {
+      const value = Number($("audio-bpm").value);
+      if ($("audio-bpm").value === "" || !Number.isFinite(value) || value < 30 || value > 300) throw new Error("BPM 请填写 30 至 300 之间的数字。");
+      result.audio_bpm = value;
     }
     result.audio_key = $("audio-key").value;
     result.audio_mode = $("audio-mode").value;
@@ -184,6 +193,7 @@ $("example-audio").onclick = () => {
   $("file-name").textContent = "C 大调 · WAV 四音示例"; $("file-description").textContent = "C5 · D5 · E5 · F5";
   $("midi-fields").hidden = true; $("audio-fields").hidden = false;
   $("audio-start").value = 0; $("audio-duration").value = 3; $("audio-bpm").value = 120; $("audio-key").value = "C major";
+  $("audio-bpm-auto").checked = false; updateAudioBpm();
   $("audio-full").checked = false; updateAudioRange();
   $("audio-mode").value = "direct";
   generate();
@@ -201,7 +211,7 @@ function renderNotation() {
   const tempo = state.result.report.audio?.tempo_bpm_q;
   $("score-meta").textContent = key.tonic_spelling + (key.mode === "major" ? " 大调" : " 小调") +
     (key.source === "assumed" ? "（未确认）" : "") + " · 1=" + pitchName(key.do_midi) +
-    (tempo ? ` · ${tempo} BPM（需核对）` : "") + " · " + count + " 个音符" +
+    (tempo ? ` · ${tempo} BPM（${state.result.report.audio?.tempo_source === "estimated_spectral_flux_unconfirmed" ? "自动估计，需核对" : "手动设置"}）` : "") + " · " + count + " 个音符" +
     (inferredCount ? `（其中 ${inferredCount} 个 * 待校对）` : "") + " · 移调 " +
     (shift > 0 ? "+" : "") + shift + " 半音" +
     (state.result.report.audio?.full_song ? ` · 自动拼接 ${state.result.report.audio.chunks.length} 段` : "");
