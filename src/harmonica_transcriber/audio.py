@@ -104,7 +104,7 @@ def _quantized_q(seconds: float, bpm: float) -> Fraction:
 
 
 def _fill_pitch_gaps(frames: list[dict], labels: list[int | str], *,
-                     min_note_frames: int, onsets: set[int]) -> list[bool]:
+                     min_note_frames: int, onsets: set[int]) -> tuple[list[bool], int]:
     """Promote sustained alternate candidates and very short note transitions."""
     inferred = [False] * len(labels)
     candidates: list[int | None] = []
@@ -114,6 +114,8 @@ def _fill_pitch_gaps(frames: list[dict], labels: list[int | str], *,
             candidates.append(None)
         else:
             candidates.append(int(round(69 + 12 * math.log2(float(hz) / 440))))
+    reliable_labels = labels.copy()
+    suppressed_candidate_indices: set[int] = set()
     half_window = 4 if min_note_frames >= 10 else 3
     required = 5 if min_note_frames >= 10 else 4
     for i, label in enumerate(labels):
@@ -127,6 +129,16 @@ def _fill_pitch_gaps(frames: list[dict], labels: list[int | str], *,
         if counts:
             pitch, count = max(counts.items(), key=lambda item: item[1])
             if count >= required and (candidates[i] in (None, pitch)):
+                nearby_notes = [reliable_labels[j] for j in range(max(0, i-half_window-1),
+                                 min(len(reliable_labels), i+half_window+2))
+                                if isinstance(reliable_labels[j], int)]
+                candidate_periodicity = max((float(frames[j].get("periodicity", 0))
+                    for j in range(max(0, i-half_window), min(len(frames), i+half_window+1))
+                    if candidates[j] == pitch), default=0.0)
+                if nearby_notes and min(abs(pitch - neighbor) for neighbor in nearby_notes) > 7 and candidate_periodicity < 0.80:
+                    suppressed_candidate_indices.update(j for j in range(max(0, i-half_window),
+                        min(len(candidates), i+half_window+1)) if candidates[j] == pitch)
+                    continue
                 labels[i] = pitch
                 inferred[i] = True
     # Bridge only sub-0.2s gaps between audible notes. Long ambiguous passages
@@ -146,7 +158,7 @@ def _fill_pitch_gaps(frames: list[dict], labels: list[int | str], *,
                 labels[j] = labels[i-1] if j < split else labels[end]
                 inferred[j] = True
         i = end
-    return inferred
+    return inferred, len(suppressed_candidate_indices)
 
 
 def notes_to_score(evidence: dict, *, source_name: str, bpm: float, key_text: str,
@@ -171,7 +183,8 @@ def notes_to_score(evidence: dict, *, source_name: str, bpm: float, key_text: st
         else:
             labels.append("unknown")
     onset = set(int(i) for i in evidence.get("onset_frames", []))
-    inferred = _fill_pitch_gaps(frames, labels, min_note_frames=min_note_frames, onsets=onset)
+    inferred, suppressed_outlier_candidate_frames = _fill_pitch_gaps(
+        frames, labels, min_note_frames=min_note_frames, onsets=onset)
     # A one-frame pitch blip is evidence to inspect, not a definite note.
     for i in range(2, len(labels) - 2):
         around = labels[i-2:i] + labels[i+1:i+3]
@@ -246,7 +259,9 @@ def notes_to_score(evidence: dict, *, source_name: str, bpm: float, key_text: st
         "first_full_bar_q": "0", "meter_alignment_status": "unconfirmed",
         "key_map": [key], "events": filled, "changes": []
     }
-    return validate_score(score), {"discarded_subgrid_segments": discarded, "frame_count": len(frames),
+    return validate_score(score), {"discarded_subgrid_segments": discarded,
+                                   "suppressed_outlier_candidate_frames": suppressed_outlier_candidate_frames,
+                                   "frame_count": len(frames),
                                    "note_count": sum(e["kind"] == "note" for e in filled),
                                    "unknown_count": sum(e["kind"] == "unknown" for e in filled),
                                    "inferred_note_count": sum(e["kind"] == "note" and e.get("review_required", False) for e in filled)}
@@ -398,7 +413,7 @@ def transcribe(path: Path, job: Path, *, source_name: str, start_sec: object,
                 "tempo_source": "user_or_default_unverified",
                 "key_source": key_source, "meter_source": "assumed", "meter_alignment_status": "unconfirmed",
                 "time_grid_q": "1/4", "analysis_mode": mode, "full_song": full_song,
-                "pitch_completion_version": "candidate-and-short-gap-r2",
+                "pitch_completion_version": "candidate-and-short-gap-r3",
                 "chunks": evidence.get("chunks", []),
                 "separation": separation, "accompaniment": accompaniment_summary, **summary}
     return score, manifest
