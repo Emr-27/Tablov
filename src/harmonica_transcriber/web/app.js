@@ -248,21 +248,24 @@ function renderResult() {
     result.score.events.some(e => e.kind === "note" && e.pitch_midi < 60);
   $("raise-octave").hidden = !lowVocal;
   $("play-original").textContent = originalPlaybackLabel();
-  $("playback-hint").textContent = result.downloads["vocal_segment.wav"]
+  const playbackHint = result.downloads["vocal_segment.wav"]
     ? "原唱人声播放所选片段的分离音轨；口琴版播放识别草谱的合成音。若两者音高或节奏不同，请校正草谱。"
     : report.audio && state.resultFileUrl
       ? "原录音播放所选音频片段；口琴版播放识别草谱的合成音。"
       : "两种试听均根据谱面合成，不包含原录音。";
+  $("playback-hint").textContent = playbackHint + (result.accompaniment_score
+    ? " 伴奏谱演奏按钮播放伴奏旋律候选的合成音；下方可单独试听分离后的伴奏原音。" : "");
   if (state.resultFileUrl) $("result-source-audio").src = state.resultFileUrl;
   else $("result-source-audio").removeAttribute("src");
   $("vocal-playback").hidden = !result.downloads["vocal_segment.wav"];
   if (result.downloads["vocal_segment.wav"]) $("vocal-audio").src = result.downloads["vocal_preview.mp3"] || result.downloads["vocal_segment.wav"];
   else $("vocal-audio").removeAttribute("src");
-  const hasAccompaniment = Boolean(result.accompaniment_score && result.downloads["accompaniment_preview.mp3"]);
+  const hasAccompanimentScore = Boolean(result.accompaniment_score);
+  const hasAccompanimentAudio = Boolean(result.downloads["accompaniment_preview.mp3"]);
   $("tab-accompaniment").hidden = !result.accompaniment_score;
-  $("play-accompaniment").hidden = !hasAccompaniment;
-  $("accompaniment-playback").hidden = !hasAccompaniment;
-  if (hasAccompaniment) $("accompaniment-audio").src = result.downloads["accompaniment_preview.mp3"];
+  $("play-accompaniment").hidden = !hasAccompanimentScore;
+  $("accompaniment-playback").hidden = !hasAccompanimentAudio;
+  if (hasAccompanimentAudio) $("accompaniment-audio").src = result.downloads["accompaniment_preview.mp3"];
   else $("accompaniment-audio").removeAttribute("src");
   renderNotation();
   const warnings = [];
@@ -327,7 +330,7 @@ function stopAudio(exceptMedia = null) {
   document.querySelectorAll(".note.is-playing").forEach(note => note.classList.remove("is-playing"));
   $("play-original").textContent = originalPlaybackLabel();
   $("play-arranged").textContent = "▶ 口琴版试听";
-  $("play-accompaniment").textContent = "▶ 伴奏试听";
+  $("play-accompaniment").textContent = "▶ 伴奏谱演奏";
   $("play-original").setAttribute("aria-pressed", "false");
   $("play-arranged").setAttribute("aria-pressed", "false");
   $("play-accompaniment").setAttribute("aria-pressed", "false");
@@ -396,8 +399,8 @@ function activateMediaPlayback(view, media, label, offset, duration) {
 function updatePlaybackButtons(view, playing) {
   const button = $("play-" + view);
   if (!button) return;
-  const label = view === "original" ? originalPlaybackName() : view === "arranged" ? "口琴版" : "伴奏";
-  button.textContent = playing ? "■ 停止" + label : "▶ " + label + "试听";
+  const label = view === "original" ? originalPlaybackName() : view === "arranged" ? "口琴版" : "伴奏谱";
+  button.textContent = playing ? "■ 停止" + label : "▶ " + label + (view === "accompaniment" ? "演奏" : "试听");
   button.setAttribute("aria-pressed", String(playing));
 }
 function stopScheduledNotes() {
@@ -446,13 +449,6 @@ async function playVersion(view) {
   try {
     state.view = view;
     renderNotation();
-    if (view === "accompaniment") {
-      const media = $("accompaniment-audio");
-      media.currentTime = 0;
-      activateMediaPlayback(view, media, "分离后伴奏 · 伴奏旋律候选", 0, Number.isFinite(media.duration) ? media.duration : timingForView(view).duration);
-      await media.play();
-      return;
-    }
     if (view === "original" && state.result.report.audio) {
       const manifest = state.result.report.audio;
       const vocal = Boolean(state.result.downloads["vocal_segment.wav"]);
@@ -467,7 +463,9 @@ async function playVersion(view) {
     }
     const timing = timingForView(view);
     if (!timing.events.length) return toast("没有可试听的音符");
-    showPlayback(view, view === "original" ? "原始旋律 · 谱面合成" : "口琴版 · 谱面合成", timing.events, timing.origin, timing.duration);
+    const label = view === "original" ? "原始旋律 · 谱面合成"
+      : view === "accompaniment" ? "伴奏旋律候选 · 谱面合成" : "口琴版 · 谱面合成";
+    showPlayback(view, label, timing.events, timing.origin, timing.duration);
     state.transport.origin = timing.origin;
     state.playingView = view;
     updatePlaybackButtons(view, true);
