@@ -1,4 +1,4 @@
-"""Audio intake: an isolated FFT-YIN worker and conservative note candidates."""
+"""Audio intake: isolated pitch workers and conservative note candidates."""
 from fractions import Fraction
 from hashlib import sha256
 import json
@@ -30,6 +30,17 @@ def resources() -> tuple[Path, Path]:
     if not python.is_file() or not ffmpeg.is_file():
         raise ContractError("音频环境", "本机 DDSP Python 或 FFmpeg 不存在，请检查配置路径")
     return python, ffmpeg
+
+
+def vocal_pitch_backend() -> str:
+    """Prefer the installed vocal model; keep FFT-YIN usable without it."""
+    try:
+        config = json.loads(CONFIG.read_text(encoding="utf-8"))["resources"]
+        code = config.get("ddsp_rmvpe_code")
+        weight = config.get("ddsp_rmvpe_weight")
+        return "rmvpe" if code and weight and Path(code).is_file() and Path(weight).is_file() else "fft-yin"
+    except (OSError, ValueError, KeyError, TypeError):
+        return "fft-yin"
 
 
 def audio_duration(path: Path) -> float:
@@ -67,7 +78,7 @@ def chunk_plan(duration: float) -> list[tuple[float, float]]:
 
 
 def extract_evidence(path: Path, job: Path, start_sec: float, duration_sec: float,
-                     *, mode: str = "vocal") -> dict:
+                     *, mode: str = "vocal", pitch_backend: str = "fft-yin") -> dict:
     path = path.resolve()
     job = job.resolve()
     job.mkdir(parents=True, exist_ok=True)
@@ -75,9 +86,22 @@ def extract_evidence(path: Path, job: Path, start_sec: float, duration_sec: floa
     evidence_path = job / ("accompaniment_evidence.json" if mode == "accompaniment" else "pitch_evidence.json")
     command = [str(python), "-B", str(WORKER), "--input", str(path), "--ffmpeg", str(ffmpeg),
                "--start", str(start_sec), "--duration", str(duration_sec), "--output", str(evidence_path),
-               "--mode", mode]
+               "--mode", mode, "--pitch-backend", pitch_backend]
+    worker_env = None
+    if pitch_backend == "rmvpe":
+        try:
+            config = json.loads(CONFIG.read_text(encoding="utf-8"))["resources"]
+            code = Path(config["ddsp_rmvpe_code"])
+            weight = Path(config["ddsp_rmvpe_weight"])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise ContractError("音频环境", "本机 RMVPE 配置不可用") from exc
+        if not code.is_file() or not weight.is_file():
+            raise ContractError("音频环境", "本机 RMVPE 程序或模型文件缺失")
+        command += ["--rmvpe-code", str(code), "--rmvpe-weight", str(weight)]
+        worker_env = os.environ.copy()
+        worker_env["NUMBA_DISABLE_JIT"] = "1"
     try:
-        done = subprocess.run(command, cwd=job, capture_output=True, timeout=240,
+        done = subprocess.run(command, cwd=job, env=worker_env, capture_output=True, timeout=240,
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False)
     except subprocess.TimeoutExpired as exc:
         raise ContractError("音频识别", "分析超时；请选择更短的片段") from exc
@@ -104,7 +128,9 @@ def _quantized_q(seconds: float, bpm: float) -> Fraction:
 
 
 def _fill_pitch_gaps(frames: list[dict], labels: list[int | str], *,
-                     min_note_frames: int, onsets: set[int]) -> tuple[list[bool], int]:
+                     min_note_frames: int, onsets: set[int],
+                     promote_candidates: bool = True,
+                     bridge_pitch_changes: bool = True) -> tuple[list[bool], int]:
     """Promote sustained alternate candidates and very short note transitions."""
     inferred = [False] * len(labels)
     candidates: list[int | None] = []
@@ -114,6 +140,8 @@ def _fill_pitch_gaps(frames: list[dict], labels: list[int | str], *,
             candidates.append(None)
         else:
             candidates.append(int(round(69 + 12 * math.log2(float(hz) / 440))))
+    if not promote_candidates:
+        candidates = [None] * len(labels)
     reliable_labels = labels.copy()
     suppressed_candidate_indices: set[int] = set()
     half_window = 4 if min_note_frames >= 10 else 3
@@ -151,7 +179,9 @@ def _fill_pitch_gaps(frames: list[dict], labels: list[int | str], *,
         end = i + 1
         while end < len(labels) and labels[end] == "unknown":
             end += 1
-        if i and end < len(labels) and end - i <= 12 and isinstance(labels[i-1], int) and isinstance(labels[end], int):
+        if (i and end < len(labels) and end - i <= (12 if bridge_pitch_changes else 6) and
+                isinstance(labels[i-1], int) and isinstance(labels[end], int) and
+                (bridge_pitch_changes or labels[i-1] == labels[end])):
             onset = next((at for at in sorted(onsets) if i <= at < end), None)
             split = onset if onset is not None else (i + end) // 2
             for j in range(i, end):
@@ -159,6 +189,32 @@ def _fill_pitch_gaps(frames: list[dict], labels: list[int | str], *,
                 inferred[j] = True
         i = end
     return inferred, len(suppressed_candidate_indices)
+
+
+def _smooth_short_pitch_islands(labels: list[int | str], *, min_note_frames: int,
+                                onsets: set[int]) -> int:
+    """Absorb sub-note pitch wobble between nearby stable pitches."""
+    runs = []
+    left = 0
+    for right in range(1, len(labels) + 1):
+        if right == len(labels) or labels[right] != labels[left]:
+            runs.append((left, right, labels[left]))
+            left = right
+    smoothed = 0
+    for index in range(1, len(runs) - 1):
+        start, end, pitch = runs[index]
+        previous, following = runs[index - 1][2], runs[index + 1][2]
+        if (not isinstance(pitch, int) or end - start >= min_note_frames or
+                not isinstance(previous, int) or not isinstance(following, int) or
+                max(abs(pitch - previous), abs(pitch - following)) > 2):
+            continue
+        split = next((at for at in sorted(onsets) if start <= at < end), (start + end) // 2)
+        for at in range(start, end):
+            replacement = previous if at < split else following
+            if labels[at] != replacement:
+                labels[at] = replacement
+                smoothed += 1
+    return smoothed
 
 
 def notes_to_score(evidence: dict, *, source_name: str, bpm: float, key_text: str,
@@ -183,8 +239,11 @@ def notes_to_score(evidence: dict, *, source_name: str, bpm: float, key_text: st
         else:
             labels.append("unknown")
     onset = set(int(i) for i in evidence.get("onset_frames", []))
+    polyphonic_candidate = evidence.get("backend") == "fft-yin-highpass-candidate"
     inferred, suppressed_outlier_candidate_frames = _fill_pitch_gaps(
-        frames, labels, min_note_frames=min_note_frames, onsets=onset)
+        frames, labels, min_note_frames=min_note_frames, onsets=onset,
+        promote_candidates=not polyphonic_candidate, bridge_pitch_changes=not polyphonic_candidate)
+    smoothed_pitch_frames = _smooth_short_pitch_islands(labels, min_note_frames=min_note_frames, onsets=onset)
     # A one-frame pitch blip is evidence to inspect, not a definite note.
     for i in range(2, len(labels) - 2):
         around = labels[i-2:i] + labels[i+1:i+3]
@@ -261,6 +320,7 @@ def notes_to_score(evidence: dict, *, source_name: str, bpm: float, key_text: st
     }
     return validate_score(score), {"discarded_subgrid_segments": discarded,
                                    "suppressed_outlier_candidate_frames": suppressed_outlier_candidate_frames,
+                                   "smoothed_pitch_frames": smoothed_pitch_frames,
                                    "frame_count": len(frames),
                                    "note_count": sum(e["kind"] == "note" for e in filled),
                                    "unknown_count": sum(e["kind"] == "unknown" for e in filled),
@@ -285,6 +345,7 @@ def transcribe(path: Path, job: Path, *, source_name: str, start_sec: object,
         raise ContractError("四分音符 BPM", "应在 30–300 之间")
     if mode not in ("direct", "vocal"):
         raise ContractError("识别来源", "请选择清晰单旋律或提取主唱")
+    vocal_backend = vocal_pitch_backend() if mode == "vocal" else "fft-yin"
     do = None if do_midi in (None, "") else integer(do_midi, "无点 1", 0, 127)
     if not isinstance(key_text, str) or not key_text:
         key_text = "C major"
@@ -329,7 +390,7 @@ def transcribe(path: Path, job: Path, *, source_name: str, start_sec: object,
                         frame["sec"] = round(part_start + frame["sec"] - last_instrumental["source_start_sec"], 6)
                     instrumental_frames.extend(last_instrumental["frames"])
                     instrumental_onsets.extend(instrumental_offset + int(i) for i in last_instrumental["onset_frames"])
-                part = extract_evidence(vocal, part_job, 0, part_duration)
+                part = extract_evidence(vocal, part_job, 0, part_duration, pitch_backend=vocal_backend)
                 part["analysis_audio_sha256"] = part["input_sha256"]
                 part["input_sha256"] = input_hash
                 part["channel_mix"] = "MSST vocals -> FFmpeg mono downmix"
@@ -380,7 +441,7 @@ def transcribe(path: Path, job: Path, *, source_name: str, start_sec: object,
             accompaniment_evidence["channel_mix"] = "MSST other (accompaniment) -> bandpass -> mono"
             (job / "accompaniment_segment.wav").write_bytes(instrumental.read_bytes())
             separation["accompaniment_sha256"] = sha256(instrumental.read_bytes()).hexdigest()
-        evidence = extract_evidence(vocal, job, 0, duration)
+        evidence = extract_evidence(vocal, job, 0, duration, pitch_backend=vocal_backend)
         evidence["analysis_audio_sha256"] = evidence["input_sha256"]
         evidence["input_sha256"] = sha256(path.read_bytes()).hexdigest()
         evidence["source_start_sec"] = start
@@ -413,7 +474,8 @@ def transcribe(path: Path, job: Path, *, source_name: str, start_sec: object,
                 "tempo_source": "user_or_default_unverified",
                 "key_source": key_source, "meter_source": "assumed", "meter_alignment_status": "unconfirmed",
                 "time_grid_q": "1/4", "analysis_mode": mode, "full_song": full_song,
-                "pitch_completion_version": "candidate-and-short-gap-r3",
+                "pitch_completion_version": ("vocal-" + vocal_backend + "-and-conservative-accompaniment-r4")
+                    if mode == "vocal" else "candidate-and-short-gap-r4",
                 "chunks": evidence.get("chunks", []),
                 "separation": separation, "accompaniment": accompaniment_summary, **summary}
     return score, manifest

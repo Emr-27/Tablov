@@ -34,7 +34,7 @@
             <label class="audio-full-choice"><input id="audio-full" type="checkbox"> 自动处理整首歌曲</label>
             <div class="field-pair"><label>片段起点 · 秒<input id="audio-start" type="number" min="0" max="3600" step="0.1" value="0"></label><label>片段长度 · 秒<input id="audio-duration" type="number" min="0.5" max="60" step="0.1" value="30"></label></div>
             <div class="field-pair"><label>四分音符 BPM<input id="audio-bpm" type="number" min="30" max="300" step="0.1" value="120"></label><label>调性<select id="audio-key"><option value="">未确认 · 暂按 C 大调</option><option value="C major">C 大调</option><option value="G major">G 大调</option><option value="D major">D 大调</option><option value="A major">A 大调</option><option value="E major">E 大调</option><option value="F major">F 大调</option><option value="Bb major">降 B 大调</option><option value="Eb major">降 E 大调</option><option value="A minor">A 小调</option><option value="E minor">E 小调</option><option value="D minor">D 小调</option></select></label></div>
-            <p class="hint">BPM 和调性由你填写；未确认时生成的是待核对草谱。音频在本机分析。</p>
+            <p class="hint">120 BPM 只是初始值，若与歌曲节拍不符，谱面时值和小节会错位；请按歌曲核对 BPM 与调性。音频在本机分析。</p>
           </div>
           <p class="capability">MIDI / JSON 可直接转谱。MP3 / WAV / MP4 / M4A 可选段识别；混合歌曲可分别查看人声与伴奏旋律候选。</p>
         </section>

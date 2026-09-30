@@ -40,6 +40,32 @@ def sine_fixture(path):
         wav.writeframes(struct.pack("<" + "h"*len(data), *data))
 
 class AudioTests(unittest.TestCase):
+    def test_short_vocal_pitch_wobble_is_absorbed(self):
+        frames = []
+        for index, midi in enumerate([60] * 12 + [61] * 3 + [60] * 12):
+            hz = 440 * 2 ** ((midi - 69) / 12)
+            frames.append({"sec": round(index * .016, 6), "rms": .2,
+                           "hz": hz, "candidate_hz": hz, "voiced": True,
+                           "periodicity": 1.0})
+        evidence = {"backend": "rmvpe-local", "input_sha256": "a" * 64,
+                    "source_start_sec": 0.0, "decoded_duration_sec": len(frames) * .016,
+                    "frames": frames, "onset_frames": []}
+        score, summary = notes_to_score(evidence, source_name="test", bpm=120, key_text="C major")
+        self.assertEqual({event["pitch_midi"] for event in score["events"] if event["kind"] == "note"}, {60})
+        self.assertGreater(summary["smoothed_pitch_frames"], 0)
+
+    def test_ambiguous_accompaniment_candidates_stay_unknown(self):
+        frames = [{"sec": round(index * .016, 6), "rms": .2, "hz": None,
+                   "candidate_hz": 261.626, "voiced": False, "periodicity": 0.0}
+                  for index in range(40)]
+        evidence = {"backend": "fft-yin-highpass-candidate", "input_sha256": "a" * 64,
+                    "source_start_sec": 0.0, "decoded_duration_sec": len(frames) * .016,
+                    "frames": frames, "onset_frames": []}
+        score, summary = notes_to_score(evidence, source_name="test", bpm=120,
+                                        key_text="C major", allow_no_notes=True, min_note_frames=10)
+        self.assertEqual(summary["note_count"], 0)
+        self.assertTrue(all(event["kind"] == "unknown" for event in score["events"]))
+
     def test_short_weak_pitch_is_written_as_reviewable_note(self):
         hz = 261.626
         def frame(index, *, strong=False, candidate=False):

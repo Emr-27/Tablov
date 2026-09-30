@@ -198,7 +198,13 @@ function renderNotation() {
   const count = displayedScore.events.filter(e => e.kind === "note").length;
   const inferredCount = displayedScore.events.filter(e => e.kind === "note" && e.review_required).length;
   const shift = raw ? 0 : state.result.arrangement.global_transpose;
-  $("score-meta").textContent = key.tonic_spelling + (key.mode === "major" ? " 大调" : " 小调") + " · 1=" + pitchName(key.do_midi) + " · " + count + " 个音符" + (inferredCount ? `（其中 ${inferredCount} 个 * 待校对）` : "") + " · 移调 " + (shift > 0 ? "+" : "") + shift + " 半音" + (state.result.report.audio?.full_song ? ` · 自动拼接 ${state.result.report.audio.chunks.length} 段` : "");
+  const tempo = state.result.report.audio?.tempo_bpm_q;
+  $("score-meta").textContent = key.tonic_spelling + (key.mode === "major" ? " 大调" : " 小调") +
+    (key.source === "assumed" ? "（未确认）" : "") + " · 1=" + pitchName(key.do_midi) +
+    (tempo ? ` · ${tempo} BPM（需核对）` : "") + " · " + count + " 个音符" +
+    (inferredCount ? `（其中 ${inferredCount} 个 * 待校对）` : "") + " · 移调 " +
+    (shift > 0 ? "+" : "") + shift + " 半音" +
+    (state.result.report.audio?.full_song ? ` · 自动拼接 ${state.result.report.audio.chunks.length} 段` : "");
   $("tab-original").setAttribute("aria-selected", original);
   $("tab-arranged").setAttribute("aria-selected", !raw);
   $("tab-accompaniment").setAttribute("aria-selected", Boolean(accompaniment));

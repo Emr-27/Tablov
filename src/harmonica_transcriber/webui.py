@@ -195,13 +195,18 @@ def generate(payload: dict, jobs_root: Path, progress=None) -> dict:
     arrangement = json.loads((output / "arrangement.json").read_text(encoding="utf-8"))
     report = json.loads((output / "report.json").read_text(encoding="utf-8"))
     if audio_manifest is not None:
-        report["implemented_capability"] = ("msst-vocals-plus-fft-yin-review" if audio_manifest["analysis_mode"] == "vocal"
+        vocal_backend = "RMVPE" if audio_manifest["backend"] == "rmvpe-local" else "FFT-YIN"
+        report["implemented_capability"] = ("msst-vocals-plus-" + vocal_backend.lower() + "-review"
+                                            if audio_manifest["analysis_mode"] == "vocal"
                                             else "audio-fft-yin-monophonic-review")
         report["audio"] = audio_manifest
         report["source"] = {"kind": "audio", "name": audio_manifest["source_name"],
                             "sha256": audio_manifest["input_sha256"],
                             "derived_score_path": str(path.resolve())}
-        report["warnings"].append("主唱音高由 FFT-YIN、伴奏候选由谐波显著度与短缺口补全生成；BPM、拍号及小节对齐未自动确认，请试听校正")
+        if audio_manifest["analysis_mode"] == "vocal":
+            report["warnings"].append(f"主唱音高由 {vocal_backend}、伴奏候选由谐波显著度生成；BPM、拍号及小节对齐未自动确认，请试听校正")
+        else:
+            report["warnings"].append("单旋律音高由 FFT-YIN 生成；BPM、拍号及小节对齐未自动确认，请试听校正")
         inferred = sum(e["kind"] == "note" and e.get("review_required", False) for e in score["events"])
         if inferred:
             report["warnings"].append(f"已自动补全 {inferred} 个待校对音（谱面标 *）；请对照原音频检查，仍无法判断的区段保留 ?")
