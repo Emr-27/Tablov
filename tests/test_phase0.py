@@ -79,7 +79,7 @@ class Phase0Tests(unittest.TestCase):
         score = validate_score(sample())
         arr = arrange(score, profile())
         self.assertEqual([e["fingering"]["tab"] for e in arr["events"]], ["5D", "6B", "7B", "6D+"])
-        self.assertIn("简谱 | 5:1 6:1 (1):1 7:1 |", markdown_score(score, arr))
+        self.assertIn("简谱 | 5:1 6:1 [1]:1 7:1 |", markdown_score(score, arr))
         self.assertIn("TAB  | 5D:1 6B:1 7B:1 6D+:1 |", markdown_score(score, arr))
         self.assertEqual([e["pitch_midi"] for e in score["events"]], [74, 76, 79, 78])
         self.assertIsNone(pitch_for(profile(), Fingering(12, 1, 1)))
@@ -92,7 +92,7 @@ class Phase0Tests(unittest.TestCase):
                            event("n3", "note", "2", "1", 36),
                            event("n4", "note", "3", "1", 73)]
         output = markdown_score(validate_score(score))
-        self.assertIn("简谱 | (1):1 [1]:1 [[1]]:1 (#1):1 |", output)
+        self.assertIn("简谱 | [1]:1 (1):1 ((1)):1 [#1]:1 |", output)
         self.assertNotIn("1,", output)
 
     def test_T01_triplet_exact_and_cross_bar_tie(self):

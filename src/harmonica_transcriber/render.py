@@ -112,9 +112,9 @@ def _export_jianpu(token: str) -> str:
         return token
     note, octave = match.groups()
     if octave.startswith("'"):
-        return "(" * len(octave) + note + ")" * len(octave)
-    if octave.startswith(","):
         return "[" * len(octave) + note + "]" * len(octave)
+    if octave.startswith(","):
+        return "(" * len(octave) + note + ")" * len(octave)
     return note
 
 
@@ -159,7 +159,7 @@ def markdown_score(score: dict, arrangement: dict | None = None, *, tab_only: bo
         body = "简谱 | " + jianpu + " |"
         if arrangement:
             body += "\nTAB  | " + tab + " |"
-    footer = ("\n\n文本简谱用 `(1)` 表示高音、`[1]` 表示低音、`[[1]]` 表示倍低音；升降号写在括号内，如 `(#1)`。"
+    footer = ("\n\n文本简谱用 `(1)` 表示低音、`((1))` 表示倍低音、`[1]` 表示高音；升降号写在括号内，如 `[#1]`。"
               "`*` 标记根据候选音高或短缺口补出的待校对音；`?` 表示仍无法判断，`0` 表示低能量休止，"
               "`X[...]` 表示当前音表不可吹；`~` 是同一音跨小节延续。\n")
     return title + header + "\n\n```text\n" + body + "\n```" + footer
